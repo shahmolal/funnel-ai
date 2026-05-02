@@ -18,22 +18,13 @@ const supabaseAdmin = createClient(
 );
 
 const PLAN_CONFIG = {
-  free: {
-    limit: 3,
-    refreshHours: 12,
-  },
-  pro: {
-    limit: 50,
-    refreshHours: 15 * 24,
-  },
-  agency: {
-    limit: 200,
-    refreshHours: 30 * 24,
-  },
+  free: { limit: 3, refreshHours: 12 },
+  pro: { limit: 50, refreshHours: 15 * 24 },
+  agency: { limit: 200, refreshHours: 30 * 24 },
 };
 
 function cleanText(text) {
-  return text.replace(/\s+/g, " ").trim().slice(0, 12000);
+  return text.replace(/\s+/g, " ").trim().slice(0, 3500);
 }
 
 async function scrapeWebsite(url) {
@@ -60,13 +51,14 @@ async function scrapeWebsite(url) {
     .map((_, el) => $(el).text().trim())
     .get()
     .filter(Boolean)
+    .slice(0, 30)
     .join("\n");
 
   const buttons = $("button, a")
     .map((_, el) => $(el).text().trim())
     .get()
     .filter(Boolean)
-    .slice(0, 100)
+    .slice(0, 25)
     .join("\n");
 
   const bodyText = $("body").text();
@@ -93,9 +85,7 @@ async function getUserFromToken(req) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
 
-  if (!token) {
-    throw new Error("Missing user token. Please login again.");
-  }
+  if (!token) throw new Error("Missing user token. Please login again.");
 
   const { data, error } = await supabaseAdmin.auth.getUser(token);
 
@@ -135,7 +125,6 @@ async function getOrCreateUsage(userId, plan) {
       .single();
 
     if (error) throw new Error(error.message);
-
     return newUsage;
   }
 
@@ -159,7 +148,6 @@ async function getOrCreateUsage(userId, plan) {
       .single();
 
     if (error) throw new Error(error.message);
-
     return resetUsage;
   }
 
@@ -230,68 +218,60 @@ app.post("/api/analyze", async (req, res) => {
     const prompt = `
 You are FunnelLens AI, a strict CRO and landing page audit expert.
 
-IMPORTANT RULES:
-- Analyze ONLY the scraped page content below.
-- Do NOT invent headlines, CTAs, claims, testimonials, or sections.
-- If something is missing, say it is missing.
-- Quote actual page phrases when useful.
-- Give practical, specific, conversion-focused advice.
+Rules:
+- Analyze only the scraped content.
+- Do not invent missing content.
+- Keep the answer concise and practical.
+- Quote actual page phrases only if available.
 
-USER INPUT:
+User Input:
 Landing Page URL: ${landingPageUrl}
-Product/Service Offer: ${offer}
-Target Audience: ${targetAudience}
-Main Goal: ${goal}
-Feedback Tone: ${tone}
+Product/Service Offer: ${offer || "Not provided"}
+Target Audience: ${targetAudience || "Not provided"}
+Main Goal: ${goal || "Not provided"}
+Feedback Tone: ${tone || "Balanced"}
 Competitor URL: ${competitorUrl || "Not provided"}
 
-SCRAPED LANDING PAGE CONTENT:
+Scraped Landing Page Content:
 ${pageContent}
 
-SCRAPED COMPETITOR CONTENT:
+Competitor Content:
 ${competitorContent}
 
-Return in clean Markdown:
+Return clean Markdown with these sections:
 
 # Funnel Audit Report
 
 ## Overall Funnel Score
-Start this section with exactly this line:
+Start with:
 Overall Funnel Score: NN/100
-Then explain the score in 2-3 sentences.
 
-## What The Page Currently Communicates
-Summarize actual page message.
-
-## Summary Verdict
-What works and what hurts conversions.
+## What The Page Communicates
+Short summary.
 
 ## Biggest Conversion Problems
-Bullet points.
+3-5 bullet points.
 
 ## Headline Clarity Issues
-Use actual headline if found.
+Mention actual headline if found.
 
 ## Offer Weaknesses
-What is unclear, weak, or missing.
+Short explanation.
 
 ## CTA Analysis
 Mention actual CTA/button text found.
 
 ## Trust Signal Gaps
-Testimonials, reviews, guarantees, security, logos, proof.
+Short explanation.
 
 ## Suggested Headline Rewrite
-Give 3 improved options.
+Give 3 options.
 
 ## Suggested CTA Rewrite
-Give 5 improved CTA options.
+Give 3 options.
 
-## 7-Day Action Plan
-Day 1 to Day 7.
-
-## Priority Table
-Markdown table columns: Issue, Evidence From Page, Impact, Priority, Fix.
+## Top 5 Fixes
+Give 5 priority fixes.
 `;
 
     const groqResponse = await fetch(
@@ -308,7 +288,7 @@ Markdown table columns: Issue, Evidence From Page, Impact, Priority, Fix.
             {
               role: "system",
               content:
-                "You are a strict CRO auditor. Never invent website content. Only analyze provided scraped content.",
+                "You are a strict CRO auditor. Keep responses concise. Never invent website content.",
             },
             {
               role: "user",
@@ -316,7 +296,7 @@ Markdown table columns: Issue, Evidence From Page, Impact, Priority, Fix.
             },
           ],
           temperature: 0.2,
-          max_tokens: 3500,
+          max_tokens: 1200,
         }),
       }
     );
