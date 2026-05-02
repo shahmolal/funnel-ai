@@ -9,6 +9,9 @@ export interface FunnelAuditInput {
   competitorUrl?: string;
 }
 
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+
 export async function analyzeFunnel(input: FunnelAuditInput) {
   try {
     const { data } = await supabase.auth.getSession();
@@ -18,7 +21,7 @@ export async function analyzeFunnel(input: FunnelAuditInput) {
       return "Please login before running an audit.";
     }
 
-    const response = await fetch("http://localhost:8787/api/analyze", {
+    const response = await fetch(`${API_BASE_URL}/api/analyze`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -36,6 +39,6 @@ export async function analyzeFunnel(input: FunnelAuditInput) {
     return resultData.result || "No response generated.";
   } catch (error) {
     console.error("Analyze funnel error:", error);
-    return "Backend server is not running. Please run: npm run server";
+    return "Backend API is not reachable. Please check API URL.";
   }
 }
