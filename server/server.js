@@ -9,14 +9,19 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-const corsOptions = {
-  origin: true,
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-};
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "https://funnel-ai-2opp.vercel.app");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-app.use(cors(corsOptions));
-app.options(/.*/, cors(corsOptions));
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+
+  next();
+});
+
+app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 
 const supabaseAdmin = createClient(
@@ -31,14 +36,14 @@ const PLAN_CONFIG = {
 };
 
 function cleanText(text) {
-  return text.replace(/\s+/g, " ").trim().slice(0, 3500);
+  return text.replace(/\s+/g, " ").trim().slice(0, 3000);
 }
 
 async function scrapeWebsite(url) {
   const response = await fetch(url, {
     headers: {
       "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36",
     },
   });
 
@@ -58,14 +63,14 @@ async function scrapeWebsite(url) {
     .map((_, el) => $(el).text().trim())
     .get()
     .filter(Boolean)
-    .slice(0, 30)
+    .slice(0, 20)
     .join("\n");
 
   const buttons = $("button, a")
     .map((_, el) => $(el).text().trim())
     .get()
     .filter(Boolean)
-    .slice(0, 25)
+    .slice(0, 20)
     .join("\n");
 
   const bodyText = $("body").text();
@@ -135,29 +140,6 @@ async function getOrCreateUsage(userId, plan) {
     return newUsage;
   }
 
-  const periodEnd = new Date(existingUsage.period_end);
-
-  if (periodEnd.getTime() <= now.getTime()) {
-    const newPeriodEnd = new Date(
-      now.getTime() + config.refreshHours * 60 * 60 * 1000
-    );
-
-    const { data: resetUsage, error } = await supabaseAdmin
-      .from("audit_usage")
-      .update({
-        used_count: 0,
-        period_start: now.toISOString(),
-        period_end: newPeriodEnd.toISOString(),
-        updated_at: now.toISOString(),
-      })
-      .eq("user_id", userId)
-      .select()
-      .single();
-
-    if (error) throw new Error(error.message);
-    return resetUsage;
-  }
-
   return existingUsage;
 }
 
@@ -169,7 +151,7 @@ app.post("/api/analyze", async (req, res) => {
   try {
     if (!process.env.GROQ_API_KEY) {
       return res.status(500).json({
-        error: "Missing GROQ_API_KEY in environment variables.",
+        error: "Missing GROQ_API_KEY in Railway variables.",
       });
     }
 
@@ -208,9 +190,7 @@ app.post("/api/analyze", async (req, res) => {
 
     if (usage.used_count >= config.limit) {
       return res.status(403).json({
-        error: `You have used all ${config.limit} audits for your ${plan} plan. Your tokens refresh at ${new Date(
-          usage.period_end
-        ).toLocaleString()}.`,
+        error: `You have used all ${config.limit} audits for your ${plan} plan.`,
       });
     }
 
@@ -226,53 +206,38 @@ app.post("/api/analyze", async (req, res) => {
     }
 
     const prompt = `
-You are FunnelLens AI, a strict CRO and landing page audit expert.
+You are FunnelLens AI, a strict CRO audit expert.
 
-Rules:
-- Analyze only the scraped content.
-- Do not invent missing content.
-- Keep the answer concise and practical.
-- Quote actual page phrases only if available.
+Analyze only this scraped landing page content. Keep it concise.
 
 User Input:
 Landing Page URL: ${landingPageUrl}
-Product/Service Offer: ${offer || "Not provided"}
-Target Audience: ${targetAudience || "Not provided"}
-Main Goal: ${goal || "Not provided"}
-Feedback Tone: ${tone || "Balanced"}
-Competitor URL: ${competitorUrl || "Not provided"}
+Offer: ${offer || "Not provided"}
+Audience: ${targetAudience || "Not provided"}
+Goal: ${goal || "Not provided"}
+Tone: ${tone || "Balanced"}
+Competitor: ${competitorUrl || "Not provided"}
 
-Scraped Landing Page Content:
+Page Content:
 ${pageContent}
 
 Competitor Content:
 ${competitorContent}
 
-Return clean Markdown with these sections:
+Return Markdown:
 
 # Funnel Audit Report
 
 ## Overall Funnel Score
-Start with:
 Overall Funnel Score: NN/100
 
 ## What The Page Communicates
-Short summary.
 
 ## Biggest Conversion Problems
-3-5 bullet points.
-
-## Headline Clarity Issues
-Mention actual headline if found.
-
-## Offer Weaknesses
-Short explanation.
 
 ## CTA Analysis
-Mention actual CTA/button text found.
 
 ## Trust Signal Gaps
-Short explanation.
 
 ## Suggested Headline Rewrite
 Give 3 options.
@@ -281,7 +246,6 @@ Give 3 options.
 Give 3 options.
 
 ## Top 5 Fixes
-Give 5 priority fixes.
 `;
 
     const groqResponse = await fetch(
@@ -298,7 +262,7 @@ Give 5 priority fixes.
             {
               role: "system",
               content:
-                "You are a strict CRO auditor. Keep responses concise. Never invent website content.",
+                "You are a concise CRO auditor. Do not invent content.",
             },
             {
               role: "user",
@@ -306,7 +270,7 @@ Give 5 priority fixes.
             },
           ],
           temperature: 0.2,
-          max_tokens: 1200,
+          max_tokens: 900,
         }),
       }
     );
@@ -322,28 +286,20 @@ Give 5 priority fixes.
     const result =
       data.choices?.[0]?.message?.content || "No result generated.";
 
-    const { error: auditInsertError } = await supabaseAdmin
-      .from("audits")
-      .insert({
-        user_id: user.id,
-        landing_page_url: landingPageUrl,
-        target_audience: targetAudience,
-        offer,
-        goal,
-        tone,
-        competitor_url: competitorUrl || null,
-        result,
-      });
-
-    if (auditInsertError) {
-      return res.status(500).json({
-        error: auditInsertError.message,
-      });
-    }
+    await supabaseAdmin.from("audits").insert({
+      user_id: user.id,
+      landing_page_url: landingPageUrl,
+      target_audience: targetAudience,
+      offer,
+      goal,
+      tone,
+      competitor_url: competitorUrl || null,
+      result,
+    });
 
     const newUsedCount = usage.used_count + 1;
 
-    const { data: updatedUsage, error: usageUpdateError } = await supabaseAdmin
+    const { data: updatedUsage } = await supabaseAdmin
       .from("audit_usage")
       .update({
         used_count: newUsedCount,
@@ -352,12 +308,6 @@ Give 5 priority fixes.
       .eq("user_id", user.id)
       .select()
       .single();
-
-    if (usageUpdateError) {
-      return res.status(500).json({
-        error: usageUpdateError.message,
-      });
-    }
 
     res.json({
       result,
