@@ -7,9 +7,21 @@ import { createClient } from "@supabase/supabase-js";
 dotenv.config();
 
 const app = express();
-const PORT = 8787;
+const PORT = process.env.PORT || 8080;
 
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "https://funnel-ai-2opp.vercel.app",
+      "http://localhost:5173",
+      "http://localhost:3000",
+    ],
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
+app.options("*", cors());
 app.use(express.json({ limit: "5mb" }));
 
 const supabaseAdmin = createClient(
@@ -154,11 +166,15 @@ async function getOrCreateUsage(userId, plan) {
   return existingUsage;
 }
 
+app.get("/", (req, res) => {
+  res.send("FunnelLens backend is running.");
+});
+
 app.post("/api/analyze", async (req, res) => {
   try {
     if (!process.env.GROQ_API_KEY) {
       return res.status(500).json({
-        error: "Missing GROQ_API_KEY in .env file.",
+        error: "Missing GROQ_API_KEY in environment variables.",
       });
     }
 
@@ -193,7 +209,6 @@ app.post("/api/analyze", async (req, res) => {
 
     const plan = profile.plan || "free";
     const config = PLAN_CONFIG[plan] || PLAN_CONFIG.free;
-
     const usage = await getOrCreateUsage(user.id, plan);
 
     if (usage.used_count >= config.limit) {
@@ -367,5 +382,5 @@ Give 5 priority fixes.
 });
 
 app.listen(PORT, () => {
-  console.log(`FunnelLens backend running on http://localhost:${PORT}`);
+  console.log(`FunnelLens backend running on port ${PORT}`);
 });
